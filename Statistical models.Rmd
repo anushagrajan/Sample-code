@@ -1,0 +1,313 @@
+---
+title: "Statical models ran for my thesis"
+output: html_document
+date: "2023-05-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r cars}
+library(fastDummies)
+library(ggthemes)
+library(fixest)
+library(lmtest)
+library(plm)
+library(stargazer)
+library(modelsummary)
+library(tidyverse)
+library(purrr)
+library(broom)
+library(knitr)
+library(kableExtra)
+library(MatchIt)
+library(sandwich)
+library(cobalt)
+library(ggplot2)
+library(tidyverse)
+library(broom)
+library(estimatr)
+library(magrittr)
+library(htmlTable)
+library(tableone)
+```
+
+```{r pressure, echo=FALSE}
+#cleaning data
+data$treat <- ifelse(data$party == "BJP", 1, 0)
+data$post <- ifelse(data$post == 1, 1, 0)
+```
+
+```{r pressure, echo=FALSE}
+#cleaning data
+data$treat <- ifelse(data$party == "BJP", 1, 0)
+data$post <- ifelse(data$post == 1, 1, 0)
+
+#only keep data from 2019, 2020 and 2021
+df_final <- df_final %>% dplyr::filter(year == 2019 | year == 2020 | year == 2021)
+
+#read the data as datetime
+data$Date <- as.Date(data$Date, format = "%Y-%m-%d")
+data$year <- format(data$Date, "%Y")
+
+#count number of observations in each state and make a new column called count
+data$count <- 1
+data <- data %>% group_by(State, party, Date) %>% summarise(count = sum(count))
+```
+
+```{r pressure, echo=FALSE}
+#creating a balance table by taking a log of all observations for normalisation
+counts$Population <- log(counts$Population)
+counts$Rural_population <- log(counts$Rural_population)
+counts$Percent_rural <- log(counts$Percent_rural)
+counts$Percent_urban <- log(counts$Percent_urban)
+counts$Urban_population <- log(counts$Urban_population)
+counts$Population_density <- log(counts$Population_density)
+counts$Sex_ratio <- log(counts$Sex_ratio)
+counts$GDP <- log(counts$GDP)
+counts$GDP_percapita <- log(counts$GDP_percapita)
+counts$Literacy <- log(counts$Literacy)
+counts$Hindu_percentage <- log(counts$Hindu_percentage)
+counts$Muslim_percentage <- log(counts$Muslim_percentage)
+counts$Total_crimes <- log(counts$Total_crimes)
+counts$Crime_rates <- log(counts$Crime_rates)
+
+list_cov <- c ("Population",	"Rural_population",	"Percent_rural",	"Urban_population",	"Percent_urban",	"Population_density",	"Sex_ratio",	"GDP",	"Literacy",	"Hindu_percentage",	"Muslim_percentage", "Total_crimes",	"Crime_rates", "GDP_percapita")
+
+balance_df %>%
+dplyr::summarize_at(list_cov, funs(list(broom::tidy(t.test(. ~ Party))))) %>%
+purrr::map(1) %>%
+dplyr::bind_rows(.id='variables') %>%
+dplyr::select(variables, estimate1, estimate2, p.value) %>%
+dplyr::mutate_if(is.numeric, round, 3) %>%
+knitr::kable(col.names = c("Variable", "Control (BJP = 0)", "Treat (BJP = 1)", "P value")) %>%
+kableExtra::kable_styling(full_width = FALSE, html_font = "Times New Roman")
+```
+
+```{r pressure, echo=FALSE}
+#running differences in differences estimations with OLS and poisson models, clustering SEs at the level of the state, printed using modelsummary
+
+model_basic_ols <- lm (counts ~ party * post  + factor(State) + factor (Date),
+data = count_final_df_robust)
+
+model_basic_poi <- glm(counts ~ party * post  + factor(State) + factor (Date),
+family = poisson,
+data = count_final_df_robust)
+
+models <- list("OLS" = model_basic_ols,
+"Poisson" = model_basic_poi)
+
+rows <- tribble(~term,  ~'OLS',  ~'Poisson',
+'FE:State', 'X',   'X',
+'FE:Date',   'X',   'X',
+'Controls', 'N', 'N',
+'No. of States', '25', '25')
+
+model_ols_controls <- lm (counts ~party*post + unemp_rate + C1M + C2M + C3M + C4M + C5M + C6M + C7M + H1 + covid_burden_standardised + migrant_flows + factor(State) + factor(Date), data = count_final_df_robust)
+
+model_poi_controls <- glm (counts ~party*post + unemp_rate + C1M + C2M + C3M + C4M + C5M + C6M + C7M + H1 + covid_burden_standardised  + migrant_flows + factor(State) + factor(Date), family= poisson,data = count_final_df_robust)
+
+attr(rows, 'position') <- c(4,5,6)
+ms <- modelsummary(models,
+stars = c('*' = .1, '**' = .05, '***' = .01),
+vcov = ~State,
+coef_omit = 1:36,
+add_rows = rows,
+statistic = 'std.error',
+gof_omit = 'AIC|BIC|Log.Lik|R2 Within|
+R2 Within Adj|RMSE|R2 Adj.',
+output = "html")
+
+htmlTable(ms, file = "summary_table.html")
+
+models_controls <- list("OLS" = model_ols_controls,
+"Poisson" = model_poi_controls)
+
+rows <- tribble(~term,  ~'OLS',  ~'Poisson',
+'FE:State', 'X',   'X',
+'FE:Date',   'X',   'X',
+'Controls', 'Y', 'Y',
+'No. of States', '25', '25')
+
+attr(rows, 'position') <- c(3,4,5)
+
+ms_controls <- modelsummary(models_controls,
+gof_omit = 'AIC|BIC|Log.Lik|R2 Within|R2|
+R2 Within Adj|RMSE|R2 Adj.',
+vcov = ~State,
+statistic = 'std.error',
+coef_omit = 1:47,
+add_rows = rows,
+stars = c('*' = .1, '**' = .05, '***' = .01),
+output = "html")
+
+htmlTable(ms_controls, file = "summary_table.html")
+
+models <- list("(1)" = model_ols_controls,
+"(2)" = model_poi_controls,
+"(3)"= model_basic_ols,
+"(4)"= model_basic_poi)
+
+rows <- tribble(~term,  ~'(1)',  ~'(2)', ~'(3)', ~'(4)',
+'FE:State', 'X',   'X', 'X',   'X',
+'FE:Date',   'X',   'X',  'X',   'X',
+'With controls', 'Y', 'Y',  'N', 'N',
+'No. of States', '25', '25', '25', '25')
+
+attr(rows, 'position') <- c(3,4,5,6,7)
+
+modelsxx <- modelsummary(models,
+coef_omit = 1:47,
+add_rows = rows,
+gof_omit = 'AIC|BIC|Log.Lik|R2 Within|R2|
+R2 Within Adj|RMSE|R2 Adj.|Std.Errors',
+stars = c('*' = .1, '**' = .05, '***' = .01),
+output = "html")
+
+htmlTable(modelsxx, file = "summary_table.html")
+```
+
+```{r pressure, echo=FALSE}
+#naive models in OLS, poisson and Logit for party and blame statements associations 
+
+model_ols <- lm (blame ~ party + centre_control + publication, data=for_analysis)
+model_count <-  glm (blame ~ party + centre_control + publication, family=poisson, data=for_analysis)
+model_logit <- glm(blame ~ party + publication + centre_control, data = for_analysis, family = 'binomial')
+
+models <- list("OLS" = model_ols,
+"Poisson" = model_count,
+"Logit" = model_logit)
+
+rows <- tribble(~term,  ~'OLS',  ~'Poisson', ~'Logit',
+'FE:Media outlet', 'Y',   'Y', 'Y',
+'Controls', 'Y', 'Y', 'Y')
+
+ms_mechanism <- modelsummary(models,
+gof_omit = 'AIC|BIC|Log.Lik|R2 Within|R2 Within Adj|RMSE|F|R2 Adj.|R2',
+stars = c('*' = .1, '**' = .05, '***' = .01),
+coef_map = cm,
+add_rows = rows,
+output = "html")
+
+htmlTable(ms_mechanism, file = "summary_table.html")
+```
+
+```{r pressure, echo=FALSE}
+#running robustness checks by clustering SEs at different levels 
+clfe_ols_controls <- feols(counts ~post*partyid + covid_burden + unemp_rate + C1M + C2M + C3M + C4M + C5M + C6M + C7M + H1 + migrant_flows | State + Date, data = count_data)
+
+modelsummary(clfe_ols_controls,
+vcov = list("iid", "robust", "stata",
+function(x) vcovCL(x, cluster = ~ State)),
+add_rows = se_info,
+statistic = 'conf.int',
+conf_level = .99,
+stars = c('*' = .1, '**' = .05, '***' = .01))
+
+pois_controls  <- glm (counts ~post*partyid + covid_burden + unemp_rate + C1M + C2M + C3M + C4M + C5M + C6M + C7M + H1 + migrant_flows + factor(State) + factor(Date), family=poisson, data = count_data)
+**msummary(clfe_pois_controls, stars = c('' = .1, '**' = .05, '***' = .01))
+
+se_info <- tibble(term = "Standard errors", "Regular", "Robust", "Stata", "Clustered by state")
+
+modelsummary(pois_controls,
+vcov = list("iid", "robust", "stata", function(x) vcovCL(x, cluster = ~ State)),
+add_rows = se_info,
+statistic = 'conf.int',
+conf_level = .99,
+stars = c('*' = .1, '**' = .05, '***' = .01))
+
+ms <- modelsummary(models, stars = TRUE, gof_omit = 'AIC|BIC|Log.Lik|F', output = "html")
+ms1 <- modelsummary(models,
+stars = TRUE,
+coef_omit = 'C1M|C2M|C3M|C4M|C5M|C6M|C7M|H1|covid_burden|unemp_rate',
+gof_omit = 'AIC|BIC|Log.Lik|R2 Within|R2 Within Adj|RMSE',
+output = "html")
+
+htmlTable(ms, file = "summary_table.html")
+htmlTable(ms1, file = "summary_table1.html")
+
+robust_ols_naive <- feols(counts ~ post*partyid | State + Date, data = robust_df)
+*msummary(robust_ols_naive, stars = c('*' = .1, '**' = .05, '***' = .01))
+
+robust_poisson <- fepois(counts ~ post*partyid | State + Date, data = robust_df)
+**msummary(robust_poisson, stars = c('' = .1, '**' = .05, '***' = .01))
+
+count_data %>%
+group_by(party, post) %>%
+summarise(mean_counts = round(mean(counts), 2)) %>%
+dplyr::rename("Party"= "party", "Period"="post", "Mean" = "mean_counts") %>%
+kable(caption = "Mean number of cases in pre and post periods") %>%
+kableExtra::kable_styling(full_width = FALSE, html_font = "Times New Roman")
+
+rmodel_basic_ols <- lm (counts ~ party * post  + factor(State) + factor (Date),
+data = robust_model)
+
+rmodel_basic_poi <- glm(counts ~ party * post  + factor(State) + factor (Date),
+family = poisson,
+data = robust_model)
+
+rmodel_ols_controls <- lm (counts ~party*post + unemp_rate + C1M + C2M + C3M + C4M + C5M + C6M + C7M + H1 + covid_burden_standardised + migrant_flows + factor(State) + factor(Date), data = robust_model)
+
+rmodel_poi_controls <- glm (counts ~party*post + unemp_rate + C1M + C2M + C3M + C4M + C5M + C6M + C7M + H1 + covid_burden_standardised  + migrant_flows + factor(State) + factor(Date), family= poisson, data = robust_model)
+
+models <- list("(1)" = rmodel_ols_controls,
+"(2)" = rmodel_poi_controls,
+"(3)"= rmodel_basic_ols,
+"(4)"= rmodel_basic_poi)
+
+rows <- tribble(~term,  ~'(1)',  ~'(2)', ~'(3)', ~'(4)',
+'FE:State', 'X',   'X', 'X',   'X',
+'FE:Date',   'X',   'X',  'X',   'X',
+'With controls', 'Y', 'Y',  'N', 'N',
+'No. of States', '28', '28', '28', '28')
+
+attr(rows, 'position') <- c(3,4,5,6,7)
+
+modelsxx <- modelsummary(models,
+vcov = ~State,
+stars = c('*' = .1, '**' = .05, '***' = .01),
+gof_omit = 'AIC|BIC|Log.Lik|R2 Within|
+R2 Within Adj|RMSE|R2|R2 Adj.',
+coef_omit = 1:50,
+add_rows = rows,
+output = "html")
+
+htmlTable(modelsxx, file = "summary_table.html")
+
+model_basic_ols <- lm (counts ~ party * post  + factor(State),
+data = count_final_df_robust)
+
+model_basic_poi <- glm(counts ~ party * post  + factor(State),
+family = poisson,
+data = count_final_df_robust)
+
+model_ols_controls <- lm (counts ~party*post + unemp_rate + C1M + C2M + C3M + C4M + C5M + C6M + C7M + H1 + covid_burden_standardised + migrant_flows + factor(State), data = count_final_df_robust)
+
+model_poi_controls <- glm (counts ~party*post + unemp_rate + C1M + C2M + C3M + C4M + C5M + C6M + C7M + H1 + covid_burden_standardised  + migrant_flows + factor(State), family= poisson,data = count_final_df_robust)
+
+models <- list("(1)" = model_ols_controls,
+"(2)" = model_poi_controls,
+"(3)"= model_basic_ols,
+"(4)"= model_basic_poi)
+
+rows <- tribble(~term,  ~'(1)',  ~'(2)', ~'(3)', ~'(4)',
+'FE:State', 'X',   'X', 'X',   'X',
+'With controls', 'Y', 'Y',  'N', 'N',
+'No. of States', '25', '25', '25', '25')
+
+attr(rows, 'position') <- c(3,4,5)
+
+modelsxx <- modelsummary(models,
+vcov = ~State,
+stars = c('*' = .1, '**' = .05, '***' = .01),
+gof_omit = 'AIC|BIC|Log.Lik|R2 Within|
+R2 Within Adj|RMSE|R2|R2 Adj.',
+coef_omit = 1:37,
+add_rows = rows,
+output = "html")
+
+htmlTable(modelsxx, file = "summary_table.html")
+```
